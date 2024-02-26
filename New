@@ -1,0 +1,147 @@
+package main
+
+import (
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"os"
+
+	goteamsnotify "github.com/atc0005/go-teams-notify/v2"
+)
+
+type Metrics struct {
+	Coverage           float64 `json:"coverage"`
+	DuplicatedLines    int     `json:"duplicated_lines_density"`
+	SqaleRating        float64 `json:"sqale_rating"`
+	ReliabilityRating  float64 `json:"reliability_rating"`
+	SecurityRating     float64 `json:"security_rating"`
+}
+
+func generateReport(metrics Metrics) (string, error) {
+	// Adjusting conditions for error and OK
+	var (
+		reliabilityStatus, securityStatus, coverageStatus, duplicatedLinesStatus, sqaleStatus string
+	)
+
+	// Conditions for each metric to determine status
+	// (error if condition met, OK otherwise)
+	if metrics.ReliabilityRating > 1 {
+		reliabilityStatus = "error"
+	} else {
+		reliabilityStatus = "OK"
+	}
+
+	if metrics.SecurityRating > 1 {
+		securityStatus = "error"
+	} else {
+		securityStatus = "OK"
+	}
+
+	if metrics.Coverage < 80.0 {
+		coverageStatus = "error"
+	} else {
+		coverageStatus = "OK"
+	}
+
+	if metrics.DuplicatedLines > 10 {
+		duplicatedLinesStatus = "error"
+	} else {
+		duplicatedLinesStatus = "OK"
+	}
+
+	if metrics.SqaleRating <= 1 {
+		sqaleStatus = "error"
+	} else {
+		sqaleStatus = "OK"
+	}
+
+	// Constructing the report string with the determined status values
+	report := fmt.Sprintf(`<!sonarqube> Project [CKS SLACK NOTIFIER PULGIN]analyzed. SEE <http://example.com/report> QUALITY GATE STATUS:
+
+    - Security Rating on New Code: %s
+
+    - Reliability Rating on New Code: %s
+
+    - Maintainability Rating on New Code: %s
+
+    - Coverage on New Code: %s
+
+    - Duplicated Lines on New Code: %s
+    `, securityStatus, reliabilityStatus, sqaleStatus, coverageStatus, duplicatedLinesStatus)
+
+	return report, nil
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	tmpl := template.Must(template.New("index").Parse(`
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>Quality Gate Status</title>
+	</head>
+	<body>
+		<h1>Quality Gate Status</h1>
+		<form action="/notify" method="post">
+			<input type="submit" value="Notify Teams">
+		</form>
+	</body>
+	</html>
+	`))
+
+	err := tmpl.Execute(w, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func handleNotify(w http.ResponseWriter, r *http.Request) {
+	// Sample metrics data
+	metrics := Metrics{
+		Coverage:          85.0,
+		DuplicatedLines:   5,
+		SqaleRating:       2.0,
+		ReliabilityRating: 5.0,
+		SecurityRating:    1.0,
+	}
+
+	// Generate the report
+	report, err := generateReport(metrics)
+	if err != nil {
+		log.Printf("failed to generate report: %v", err)
+		http.Error(w, "failed to generate report", http.StatusInternalServerError)
+		return
+	}
+
+	// Initialize a new Microsoft Teams client
+	mstClient := goteamsnotify.NewClient()
+
+	// Set webhook URL
+	webhookURL := "YOUR_WEBHOOK_URL_HERE"
+
+	// Create message using the report as message text
+	msg := goteamsnotify.NewMessageCard()
+	msg.Title = "Quality Gate Status"
+	msg.Text = report
+
+	// Send the message
+	if err := mstClient.Send(webhookURL, msg); err != nil {
+		log.Printf("failed to send message: %v", err)
+		http.Error(w, "failed to send message", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with success message
+	fmt.Fprint(w, "Message sent successfully!")
+}
+
+func main() {
+	http.HandleFunc("/", handleIndex)
+	http.HandleFunc("/notify", handleNotify)
+
+	log.Println("Server started on :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
